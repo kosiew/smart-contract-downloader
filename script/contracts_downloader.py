@@ -17,7 +17,9 @@ class ContractsDownloadManager:
     def __init__(self, token, addresses="all_contracts.csv", output="data", shard=1, index=0, skip=0, position=0, **kwargs):
         self.token = token
         self.addresses_path = addresses
+        parent = Path.cwd().parent
         self.output_dir = output
+        print(f"Parent = {parent} output {output} output_dir = {self.output_dir}")
         self.shard = shard
         self.index = index
         self.skip = skip
@@ -155,7 +157,9 @@ if __name__ == "__main__":
 
     token = args.token
     addresses_path = args.addresses.resolve()
-    output_dir = args.output.resolve()
+    # output_dir = args.output.resolve()
+    parent = Path.cwd().parent
+    output_dir = os.path.join(parent , args.output)        
     shard = args.shard
     index = args.index
     skip = args.skip
