@@ -108,4 +108,4 @@ dist
 
 output/
 
-script/.ipynb_checkpoints/
+.ipynb_checkpoints/
