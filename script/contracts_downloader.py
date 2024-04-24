@@ -1,15 +1,16 @@
-from operator import index
-import os
-from etherscan.contracts import Contract
-from etherscan.client import EmptyResponse, BadRequest, ConnectionRefused
-import backoff
-import json
-import sys
 import argparse
-from pathlib import Path
-import math
-from tqdm import tqdm
 import csv
+import json
+import math
+import os
+import sys
+from operator import index
+from pathlib import Path
+
+import backoff
+from etherscan.client import BadRequest, ConnectionRefused, EmptyResponse
+from etherscan.contracts import Contract
+from tqdm import tqdm
 
 
 class ContractsDownloadManager:
@@ -22,86 +23,73 @@ class ContractsDownloadManager:
         self.skip = skip
         self.position = position
 
-    def download(self):
-        not_valid = []
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
-
+    def load_not_valid_addresses(self):
         not_valid = []
         if os.path.exists('not_valid.json'):
             with open('not_valid.json') as fd:
                 not_valid = json.load(fd)
-        count = 0
-        count_effective = 0
-        empty = 0
+        return not_valid
 
-        def count_file_lines(file_path):
-            with open(file_path) as fp:
-                for i, l in enumerate(fp):
-                    pass
-            return i + 1
+    def count_file_lines(self, file_path):
+        with open(file_path) as fp:
+            return sum(1 for _ in fp)
 
-        adress_count = count_file_lines(self.addresses_path) - 1
-        batch = math.floor(adress_count / self.shard)
+    def calculate_shard_parameters(self, address_count):
+        batch = math.floor(address_count / self.shard)
         start = self.skip + (self.index * batch)
-        end = batch + (self.index * batch)
+        end = start + batch
+        if (self.index + 1) == self.shard:
+            end = address_count
+        return start, end, batch
 
-        if (self.index+1) == self.shard and self.index != 0:
-            prev_batch = math.floor(adress_count / (self.shard-1))
-            prev_start = self.index * prev_batch
-            prev_end = batch + (self.index * batch)
-            batch = adress_count - prev_end
-            start = prev_end
-            end = batch + (self.index * prev_batch)
+    def update_progress_bar(self, pbar, meta):
+        pbar.set_postfix(meta)
 
-        if (self.index+1) > self.shard:
-            raise ValueError("Index out of range")
+    def handle_file_download(self, address_path, contract_path, pbar, meta):
+        try:
+            sourcecode = self.download_contract(address=address_path)
+            if not sourcecode[0]['SourceCode']:
+                meta["empty"] += 1
+            with open(contract_path, 'w') as fd:
+                json.dump(sourcecode[0], fd)
+        except Exception as e:
+            self.not_valid.append(address_path)
+            with open('not_valid.json', 'w') as fd:
+                json.dump(self.not_valid, fd)
+            print(e)
+        finally:
+            self.update_progress_bar(pbar, meta)
 
-        if (start > adress_count):
-            raise ValueError("Start out of range")
-        
-        with open(self.addresses_path) as fp:
+    def download(self):
+        self.not_valid = self.load_not_valid_addresses()
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir)
+
+        address_count = self.count_file_lines(self.addresses_path)
+        start, end, batch = self.calculate_shard_parameters(address_count)
+
+        with open(self.addresses_path) as fp, tqdm(total=batch, position=self.index, desc=f"Shard {self.index+1}/{self.shard}", initial=self.skip) as pbar:
             reader = csv.reader(fp)
-            pbar = tqdm(total=batch, position=self.position,
-                        desc="Shard " + str(self.index+1) + "/" + str(self.shard), initial=self.skip)
-            for i, line in enumerate(reader):
-                if (count >= end):
-                    break
-                count += 1
-                if start > count:
+            meta = {"token": self.token, "empty": 0}
+            for i, line in enumerate(reader, start=1):
+                if i < start or i >= end:
                     continue
                 address_path = line[0]
-                if address_path in not_valid:
+                if address_path in self.not_valid:
                     continue
-                pbar.update(1)  # update progress bar    
-                contract_path = Path(self.output_dir, address_path + '.json')
-                meta = {}
-                meta["token"] = self.token
-                meta["index"] = str(count) + "/" + str(adress_count)
-                if os.path.exists(contract_path):
-                    pbar.set_postfix(meta)
-                    continue
-                count_effective += 1
-                meta["empty"] = str(round(empty*100/count_effective, 2)) + "%"
-                pbar.set_postfix(meta)
-                try:
-                    sourcecode = self.download_contract(address=address_path)
-                    if len(sourcecode[0]['SourceCode']) == 0:
-                        empty += 1
-                    with open(contract_path, 'w') as fd:
-                        json.dump(sourcecode[0], fd)
+                contract_path = Path(self.output_dir, f"{address_path}.json")
+                self.handle_file_download(address_path, contract_path, pbar, meta)
+                pbar.update(1)
 
-                except Exception as identifier:
-                    not_valid.append(address_path)
-                    with open('not_valid.json', 'w') as fd:
-                        json.dump(not_valid, fd)
-                    print(identifier)
-    
+        if self.not_valid:
+            with open('not_valid.json', 'w') as fd:
+                json.dump(self.not_valid, fd)    
 
     @backoff.on_exception(backoff.expo,
                           (EmptyResponse, BadRequest, ConnectionRefused),
                           max_tries=8)
     def download_contract(self, address):
+        print("Downloading contract: " + address)
         api = Contract(address=address, api_key=self.token)
         sourcecode = api.get_sourcecode()
         return sourcecode
