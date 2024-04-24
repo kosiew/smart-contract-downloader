@@ -109,3 +109,5 @@ dist
 output/
 
 .ipynb_checkpoints/
+
+download_contract_files.ipynb
