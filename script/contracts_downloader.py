@@ -14,8 +14,9 @@ from tqdm import tqdm
 
 
 class ContractsDownloadManager:
-    def __init__(self, token, addresses="all_contracts.csv", output="data", shard=1, index=0, skip=0, position=0, **kwargs):
+    def __init__(self, token, address="", addresses="all_contracts.csv", output="data", shard=1, index=0, skip=0, position=0, **kwargs):
         self.token = token
+        self.address = address
         self.addresses_path = addresses
         parent = Path.cwd().parent
         self.output_dir = output
@@ -45,7 +46,8 @@ class ContractsDownloadManager:
         return start, end, batch
 
     def update_progress_bar(self, pbar, meta):
-        pbar.set_postfix(meta)
+        if pbar is not None:
+            pbar.set_postfix(meta)
 
     def handle_file_download(self, address_path, contract_path, pbar, meta):
         try:
@@ -73,34 +75,41 @@ class ContractsDownloadManager:
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
 
-        address_count = self.count_file_lines(self.addresses_path)
-        start, end, batch = self.calculate_shard_parameters(address_count)
+        if len(self.address) > 0:
+            address_path = self.address
+            contract_path = Path(self.output_dir, f"{address_path}.json")
+            print(f"Downloading contract for address: {address_path}")
+            self.handle_file_download(address_path, contract_path, None, {"token": self.token, "empty": 0})
+            self.extract_sol_files(contract_path)
+        else:
+            address_count = self.count_file_lines(self.addresses_path)
+            start, end, batch = self.calculate_shard_parameters(address_count)
 
-        with open(self.addresses_path) as fp, tqdm(
-            total=batch, position=self.index, desc=f"Shard {self.index+1}/{self.shard}", 
-            initial=self.skip) as pbar:
-            reader = csv.reader(fp)
-            meta = {"token": self.token, "empty": 0}
-            for i, line in enumerate(reader, start=1):
-                print(f"Processing line {i}")
-                if i < start or i > end:
-                    continue
-                address_path = line[0]
-                if address_path in self.not_valid:
-                    continue
-                contract_path = Path(self.output_dir, f"{address_path}.json")
-                print(f"Downloading contract {i}/{address_count}: {address_path}")
-                self.handle_file_download(address_path, contract_path, pbar, meta)
-                self.extract_sol_files(contract_path)
-                pbar.update(1)
+            with open(self.addresses_path) as fp, tqdm(
+                total=batch, position=self.index, desc=f"Shard {self.index+1}/{self.shard}", 
+                initial=self.skip) as pbar:
+                reader = csv.reader(fp)
+                meta = {"token": self.token, "empty": 0}
+                for i, line in enumerate(reader, start=1):
+                    print(f"Processing line {i}")
+                    if i < start or i > end:
+                        continue
+                    address_path = line[0]
+                    if address_path in self.not_valid:
+                        continue
+                    contract_path = Path(self.output_dir, f"{address_path}.json")
+                    print(f"Downloading contract {i}/{address_count}: {address_path}")
+                    self.handle_file_download(address_path, contract_path, pbar, meta)
+                    self.extract_sol_files(contract_path)
+                    pbar.update(1)
 
         if self.not_valid:
             with open('not_valid.json', 'w') as fd:
-                json.dump(self.not_valid, fd)    
+                json.dump(self.not_valid, fd)
 
     def extract_sol_files(self, json_file_path):
         # Create the output directory if it does not exist
-        output_path = os.path.join(self.output_dir, 'contracts')
+        output_path = os.path.join(self.output_dir, f'contracts-{json_file_path.stem[-4:]}')
         os.makedirs(output_path, exist_ok=True)
         
         # Open and read the JSON file
@@ -143,7 +152,9 @@ if __name__ == "__main__":
         description='Download contracts from Etherscan.io.')
     parser.add_argument('-t', '--token', metavar='token',
                         type=str, help='Etherscan.io API key.')
-    parser.add_argument('-a', '--addresses', metavar='addresses', type=Path, required=False,
+    parser.add_argument('-a', '--address', metavar='single_address', type=str, required=False,
+                        default="", help='A single contract address to download.')
+    parser.add_argument('-A', '--addresses', metavar='addresses', type=Path, required=False,
                         default="contract_addresses.csv", help='CSV file containing a list of contract addresses to download.')
     parser.add_argument('-o', '--output', metavar='output', type=Path, required=False,
                         default="output", help='the path where the output should be stored.')
@@ -155,8 +166,13 @@ if __name__ == "__main__":
                         default=0, help='the lines to skip reading from in the address list.')
     args = parser.parse_args()
 
-    token = args.token
-    addresses_path = args.addresses.resolve()
+    token = args.token if args.token else os.getenv('ETHERSCAN_API')
+    address = args.address
+    # if len(address) > 0, addresses_path = ""
+    # else addresses_path = args.addresses.resolve()
+    addresses_path = ""
+    if len(address) == 0:
+        addresses_path = args.addresses.resolve()
     # output_dir = args.output.resolve()
     parent = Path.cwd().parent
     output_dir = os.path.join(parent , args.output)        
@@ -165,5 +181,5 @@ if __name__ == "__main__":
     skip = args.skip
 
     cdm = ContractsDownloadManager(
-        token, addresses_path, output_dir, shard, index, skip)
+        token, address, addresses_path, output_dir, shard, index, skip)
     cdm.download()
