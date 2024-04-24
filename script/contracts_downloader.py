@@ -68,16 +68,20 @@ class ContractsDownloadManager:
         address_count = self.count_file_lines(self.addresses_path)
         start, end, batch = self.calculate_shard_parameters(address_count)
 
-        with open(self.addresses_path) as fp, tqdm(total=batch, position=self.index, desc=f"Shard {self.index+1}/{self.shard}", initial=self.skip) as pbar:
+        with open(self.addresses_path) as fp, tqdm(
+            total=batch, position=self.index, desc=f"Shard {self.index+1}/{self.shard}", 
+            initial=self.skip) as pbar:
             reader = csv.reader(fp)
             meta = {"token": self.token, "empty": 0}
             for i, line in enumerate(reader, start=1):
-                if i < start or i >= end:
+                print(f"Processing line {i}")
+                if i < start or i > end:
                     continue
                 address_path = line[0]
                 if address_path in self.not_valid:
                     continue
                 contract_path = Path(self.output_dir, f"{address_path}.json")
+                print(f"Downloading contract {i}/{address_count}: {address_path}")
                 self.handle_file_download(address_path, contract_path, pbar, meta)
                 pbar.update(1)
 
