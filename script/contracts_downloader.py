@@ -83,12 +83,33 @@ class ContractsDownloadManager:
                 contract_path = Path(self.output_dir, f"{address_path}.json")
                 print(f"Downloading contract {i}/{address_count}: {address_path}")
                 self.handle_file_download(address_path, contract_path, pbar, meta)
-                pbar.update(1)
+                pbar.update(0.5)
+                self.extract_sol_files(contract_path)
 
         if self.not_valid:
             with open('not_valid.json', 'w') as fd:
                 json.dump(self.not_valid, fd)    
 
+    def extract_sol_files(self, json_file_path):
+        # Determine the full path to the output directory, relative to the current working directory
+        output_dir = self.output_dir
+        
+        # Open and read the JSON file
+        with open(json_file_path, 'r') as file:
+            data = json.load(file)
+            # Parse the "SourceCode" object
+            source_code = json.loads(data['SourceCode'])
+            
+            # Iterate over the items in the "sources" key
+            for path, file_info in source_code['sources'].items():
+                # Prepare the file's full path
+                full_path = os.path.join(output_dir, path)
+                # Make sure the directory exists
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                # Write the file content to the corresponding .sol file
+                with open(full_path, 'w', encoding='utf-8') as sol_file:
+                    sol_file.write(file_info['content'])
+                    
     @backoff.on_exception(backoff.expo,
                           (EmptyResponse, BadRequest, ConnectionRefused),
                           max_tries=8)
